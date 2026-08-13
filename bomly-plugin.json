@@ -1,0 +1,19 @@
+{
+  "schemaVersion": "bomly.plugin.package.v1",
+  "id": "jsreach",
+  "name": "jsreach Reachability Analyzer",
+  "version": "0.1.0",
+  "kind": "analyzer",
+  "runtime": "hashicorp-grpc",
+  "pluginApiVersion": "bomly.plugin.v1",
+  "entrypoint": {
+    "linux/amd64": "bomly-plugin-jsreach-analyzer",
+    "linux/arm64": "bomly-plugin-jsreach-analyzer",
+    "darwin/amd64": "bomly-plugin-jsreach-analyzer",
+    "darwin/arm64": "bomly-plugin-jsreach-analyzer",
+    "windows/amd64": "bomly-plugin-jsreach-analyzer.exe"
+  },
+  "description": "JavaScript/TypeScript reachability analyzer for Bomly: builds an esbuild-based import graph from your package entry points to mark which vulnerable npm packages are actually imported (package tier).",
+  "homepage": "https://github.com/bomly-dev/bomly-plugin-jsreach-analyzer",
+  "license": "Apache-2.0"
+}
