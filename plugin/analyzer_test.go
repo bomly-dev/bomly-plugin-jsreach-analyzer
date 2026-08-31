@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	model "github.com/bomly-dev/bomly-sdk"
+	"github.com/bomly-dev/bomly-sdk/testkit"
 )
 
 // fakeRunner returns a canned RunnerResult or error for tests.
@@ -46,15 +47,15 @@ func newNPMProjectDir(t *testing.T) string {
 // addNPMDep adds an npm dependency node to g and, when vulns are supplied,
 // a matching registry package (keyed by the dependency PURL) carrying them.
 // Returns the dependency node.
-func addNPMDep(t *testing.T, g *model.Graph, reg *model.PackageRegistry, projectDir, org, name, version string, vulns ...model.Vulnerability) *model.Dependency {
+func addNPMDep(t *testing.T, g *model.Graph, reg *model.PackageRegistry, projectDir, org, name, version string, vulns ...model.Vulnerability) *model.DependencyNode {
 	t.Helper()
-	dep := model.NewDependency(model.Dependency{Coordinates: model.Coordinates{Name: name,
+	dep := testkit.MustDependencyCoords(t, model.Coordinates{Name: name,
 		Org:            org,
 		Version:        version,
 		Ecosystem:      model.EcosystemNPM,
-		PackageManager: model.PackageManagerNPM}, Locations: []model.PackageLocation{{RealPath: filepath.Join(projectDir, "package-lock.json")}},
-	})
-	purl := model.CanonicalPackageURLFromDependency(dep)
+		PackageManager: model.PackageManagerNPM})
+	dep.Locations = []model.PackageLocation{{RealPath: filepath.Join(projectDir, "package-lock.json")}}
+	purl := dep.NodeID()
 	dep.PackageRef = purl
 	if err := g.AddNode(dep); err != nil {
 		t.Fatal(err)
@@ -65,7 +66,7 @@ func addNPMDep(t *testing.T, g *model.Graph, reg *model.PackageRegistry, project
 }
 
 // reachOf returns the reachability for a dependency's first vulnerability.
-func reachOf(t *testing.T, reg *model.PackageRegistry, dep *model.Dependency) *model.Reachability {
+func reachOf(t *testing.T, reg *model.PackageRegistry, dep *model.DependencyNode) *model.Reachability {
 	t.Helper()
 	pkg, ok := reg.Get(dep.PackageRef)
 	if !ok || pkg == nil || len(pkg.Vulnerabilities) == 0 {
@@ -200,8 +201,8 @@ func TestAnalyzerApplicableRequiresNPMVulns(t *testing.T) {
 
 	// go package with vuln → not applicable
 	g, reg := newSeed()
-	goDep := model.NewDependency(model.Dependency{Coordinates: model.Coordinates{Name: "lib", Ecosystem: model.EcosystemGo}})
-	goDep.PackageRef = model.CanonicalPackageURLFromDependency(goDep)
+	goDep := testkit.MustDependencyCoords(t, model.Coordinates{Org: "example.com", Name: "lib", Ecosystem: model.EcosystemGo})
+	goDep.PackageRef = goDep.NodeID()
 	_ = g.AddNode(goDep)
 	reg.Ensure(goDep.PackageRef).Vulnerabilities = []model.Vulnerability{{ID: "x"}}
 	if ok, err := a.Applicable(context.Background(), model.AnalyzeRequest{Graph: g, Registry: reg}); err != nil || ok {
@@ -226,7 +227,7 @@ func TestAnalyzerMarksTransitiveDepReachable(t *testing.T) {
 	g, reg := newSeed()
 	express := addNPMDep(t, g, reg, projectDir, "", "express", "4.0.0", model.Vulnerability{ID: "GHSA-direct", Source: "osv", ParsedSeverity: "high"})
 	bodyParser := addNPMDep(t, g, reg, projectDir, "", "body-parser", "1.0.0", model.Vulnerability{ID: "GHSA-transitive", Source: "osv", ParsedSeverity: "high"})
-	if err := g.AddEdge(express.ID, bodyParser.ID); err != nil {
+	if err := g.AddEdge(express.NodeID(), bodyParser.NodeID()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -242,7 +243,7 @@ func TestAnalyzerMarksTransitiveDepReachable(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, dep := range []*model.Dependency{express, bodyParser} {
+	for _, dep := range []*model.DependencyNode{express, bodyParser} {
 		r := reachOf(t, reg, dep)
 		if r == nil {
 			t.Fatalf("%s: missing Reachability", dep.Name)
@@ -258,7 +259,7 @@ func TestAnalyzerDoesNotExpandThroughUnimportedRoots(t *testing.T) {
 	g, reg := newSeed()
 	jest := addNPMDep(t, g, reg, projectDir, "", "jest", "29.0.0", model.Vulnerability{ID: "GHSA-devtool", Source: "osv", ParsedSeverity: "high"})
 	glob := addNPMDep(t, g, reg, projectDir, "", "glob", "8.0.0", model.Vulnerability{ID: "GHSA-trans", Source: "osv", ParsedSeverity: "high"})
-	if err := g.AddEdge(jest.ID, glob.ID); err != nil {
+	if err := g.AddEdge(jest.NodeID(), glob.NodeID()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -273,7 +274,7 @@ func TestAnalyzerDoesNotExpandThroughUnimportedRoots(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, dep := range []*model.Dependency{jest, glob} {
+	for _, dep := range []*model.DependencyNode{jest, glob} {
 		r := reachOf(t, reg, dep)
 		if r == nil {
 			t.Fatalf("%s: missing Reachability", dep.Name)
@@ -286,26 +287,26 @@ func TestAnalyzerDoesNotExpandThroughUnimportedRoots(t *testing.T) {
 
 func TestComputeReachablePackageHopsHandlesCycles(t *testing.T) {
 	g := model.New()
-	a := model.NewDependency(model.Dependency{Coordinates: model.Coordinates{Name: "a", Version: "1.0.0", Ecosystem: model.EcosystemNPM}})
-	b := model.NewDependency(model.Dependency{Coordinates: model.Coordinates{Name: "b", Version: "1.0.0", Ecosystem: model.EcosystemNPM}})
+	a := testkit.MustDependencyCoords(t, model.Coordinates{Name: "a", Version: "1.0.0", Ecosystem: model.EcosystemNPM})
+	b := testkit.MustDependencyCoords(t, model.Coordinates{Name: "b", Version: "1.0.0", Ecosystem: model.EcosystemNPM})
 	if err := g.AddNode(a); err != nil {
 		t.Fatal(err)
 	}
 	if err := g.AddNode(b); err != nil {
 		t.Fatal(err)
 	}
-	if err := g.AddEdge(a.ID, b.ID); err != nil {
+	if err := g.AddEdge(a.NodeID(), b.NodeID()); err != nil {
 		t.Fatal(err)
 	}
-	if err := g.AddEdge(b.ID, a.ID); err != nil {
+	if err := g.AddEdge(b.NodeID(), a.NodeID()); err != nil {
 		t.Fatal(err)
 	}
 
 	got := computeReachablePackageHops(g, map[string]struct{}{"a": {}})
-	if h, ok := got[a.ID]; !ok || h != 0 {
+	if h, ok := got[a.NodeID()]; !ok || h != 0 {
 		t.Errorf("expected a at hop 0: got=%v ok=%v", h, ok)
 	}
-	if h, ok := got[b.ID]; !ok || h != 1 {
+	if h, ok := got[b.NodeID()]; !ok || h != 1 {
 		t.Errorf("expected b at hop 1 (transitive of a): got=%v ok=%v", h, ok)
 	}
 }
@@ -339,11 +340,11 @@ func TestAnalyzerPopulatesHopsAndConfidence(t *testing.T) {
 	deep4 := addNPMDep(t, g, reg, projectDir, "", "deep4", "1", model.Vulnerability{ID: "GHSA-deep", Source: "osv", ParsedSeverity: "high"})
 
 	for from, to := range map[string]string{
-		express.ID:    bodyParser.ID,
-		bodyParser.ID: deep1.ID,
-		deep1.ID:      deep2.ID,
-		deep2.ID:      deep3.ID,
-		deep3.ID:      deep4.ID,
+		express.NodeID():    bodyParser.NodeID(),
+		bodyParser.NodeID(): deep1.NodeID(),
+		deep1.NodeID():      deep2.NodeID(),
+		deep2.NodeID():      deep3.NodeID(),
+		deep3.NodeID():      deep4.NodeID(),
 	} {
 		if err := g.AddEdge(from, to); err != nil {
 			t.Fatal(err)
@@ -366,7 +367,7 @@ func TestAnalyzerPopulatesHopsAndConfidence(t *testing.T) {
 		confidence model.ReachabilityConfidence
 	}
 	cases := []struct {
-		dep  *model.Dependency
+		dep  *model.DependencyNode
 		want expect
 	}{
 		{express, expect{0, model.ConfidenceHigh}},

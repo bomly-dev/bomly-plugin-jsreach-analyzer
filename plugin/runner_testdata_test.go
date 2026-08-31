@@ -10,6 +10,7 @@ import (
 	"time"
 
 	model "github.com/bomly-dev/bomly-sdk"
+	"github.com/bomly-dev/bomly-sdk/testkit"
 	"github.com/evanw/esbuild/pkg/api"
 )
 
@@ -99,7 +100,7 @@ func TestJSDescriptorAndRunnerResult(t *testing.T) {
 func TestJSStandaloneApplyRunnerResult(t *testing.T) {
 	const purl = "pkg:npm/lodash"
 	g := model.New()
-	pkg := model.NewDependency(model.Dependency{Coordinates: model.Coordinates{Name: "lodash", Ecosystem: model.EcosystemNPM, PURL: purl}})
+	pkg := testkit.MustDependencyCoords(t, model.Coordinates{Name: "lodash", Ecosystem: model.EcosystemNPM, PURL: purl})
 	if err := g.AddNode(pkg); err != nil {
 		t.Fatal(err)
 	}

@@ -65,7 +65,7 @@ func (a Analyzer) Applicable(_ context.Context, req model.AnalyzeRequest) (bool,
 	if req.Graph == nil || req.Registry == nil {
 		return false, nil
 	}
-	for _, pkg := range req.Graph.Nodes() {
+	for _, pkg := range req.Graph.DependencyNodes() {
 		if pkg == nil || !isNPMPackage(pkg) {
 			continue
 		}
@@ -79,20 +79,20 @@ func (a Analyzer) Applicable(_ context.Context, req model.AnalyzeRequest) (bool,
 }
 
 // dependencyPURL returns the registry key for a dependency node.
-func dependencyPURL(dep *model.Dependency) string {
+func dependencyPURL(dep *model.DependencyNode) string {
 	if dep == nil {
 		return ""
 	}
 	if dep.PackageRef != "" {
 		return dep.PackageRef
 	}
-	return dep.PURL
+	return dep.NodeID()
 }
 
 // vulnerabilitiesForDep returns the registry slice for a dependency. The
 // caller may mutate the returned slice in place; entries live on the
 // shared backing array owned by the registry package.
-func vulnerabilitiesForDep(req model.AnalyzeRequest, dep *model.Dependency) []model.Vulnerability {
+func vulnerabilitiesForDep(req model.AnalyzeRequest, dep *model.DependencyNode) []model.Vulnerability {
 	if req.Registry == nil || dep == nil {
 		return nil
 	}
@@ -412,7 +412,7 @@ func applyImportedPackageSeeds(req model.AnalyzeRequest, projectRoot string, imp
 	}
 	timestamp := now.UTC().Format(time.RFC3339)
 	hopsByID := computeReachablePackageHopsFromSeeds(req.Graph, imports)
-	for _, pkg := range req.Graph.Nodes() {
+	for _, pkg := range req.Graph.DependencyNodes() {
 		if pkg == nil || !isNPMPackage(pkg) {
 			continue
 		}
@@ -422,16 +422,22 @@ func applyImportedPackageSeeds(req model.AnalyzeRequest, projectRoot string, imp
 		vulns := vulnerabilitiesForDep(req, pkg)
 		for i := range vulns {
 			vuln := &vulns[i]
-			if vuln.Reachability != nil && vuln.Reachability.Analyzer == Name {
-				continue // already annotated by an earlier project pass
-			}
-			r := &model.Reachability{
+			// No skip on an earlier project pass. That skip was the loss
+			// phase 2.8 removes: a workspace's second project can import a
+			// package the first does not, and the first answer stood. Each
+			// project root now contributes evidence and the annotation is
+			// the derived summary over all of them.
+			r := &model.ReachabilityEvidence{
+				ModuleRoot: projectRoot,
+				// jsreach resolves per project root, and the hop map is keyed
+				// by node, so the finding is attributable to this occurrence.
+				DependencyRefs:         []string{pkg.NodeID()},
 				Analyzer:               Name,
 				AnalyzedAt:             timestamp,
 				Tier:                   model.TierPackage,
 				DynamicImportsDetected: dynamicImports,
 			}
-			if hops, ok := hopsByID[pkg.ID]; ok {
+			if hops, ok := hopsByID[pkg.NodeID()]; ok {
 				r.Status = model.ReachabilityReachable
 				h := hops
 				r.Hops = &h
@@ -442,10 +448,29 @@ func applyImportedPackageSeeds(req model.AnalyzeRequest, projectRoot string, imp
 				r.Reason = "package-not-imported"
 				outcome.unreachable++
 			}
-			vuln.Reachability = r
+			vuln.Reachability = withEvidence(vuln.Reachability, *r, timestamp)
 		}
 	}
 	return outcome
+}
+
+// withEvidence appends one project root's finding to a vulnerability's
+// reachability record and recomputes the summary.
+//
+// The summary is derived, never accumulated by hand: reachable anywhere wins,
+// and unreachable requires every root to say so. Writing that rule at each
+// call site is how the first-root-wins behaviour got there.
+func withEvidence(current *model.Reachability, evidence model.ReachabilityEvidence, timestamp string) *model.Reachability {
+	var all []model.ReachabilityEvidence
+	if current != nil && current.Analyzer == Name {
+		all = current.Evidence
+	}
+	all = append(all, evidence)
+	summary := model.DeriveReachability(all)
+	summary.Analyzer = Name
+	summary.AnalyzedAt = timestamp
+	summary.Evidence = all
+	return &summary
 }
 
 // computeReachablePackageHops returns a map from graph package ID to
@@ -470,18 +495,18 @@ func computeReachablePackageHopsFromSeeds(g *model.Graph, imports map[string]int
 	}
 	queue := make([]string, 0)
 	// Seed: every npm package whose name matches the import set.
-	for _, pkg := range g.Nodes() {
+	for _, pkg := range g.DependencyNodes() {
 		if pkg == nil || !isNPMPackage(pkg) {
 			continue
 		}
 		if !isPackageImported(pkg, imports) {
 			continue
 		}
-		if _, ok := hops[pkg.ID]; ok {
+		if _, ok := hops[pkg.NodeID()]; ok {
 			continue
 		}
-		hops[pkg.ID] = importedPackageDepth(pkg, imports)
-		queue = append(queue, pkg.ID)
+		hops[pkg.NodeID()] = importedPackageDepth(pkg, imports)
+		queue = append(queue, pkg.NodeID())
 	}
 	// BFS: every dep edge from a reachable package adds its target at
 	// hop+1 if it has not been seen yet (shortest-distance wins).
@@ -497,17 +522,17 @@ func computeReachablePackageHopsFromSeeds(g *model.Graph, imports map[string]int
 			if dep == nil {
 				continue
 			}
-			if _, ok := hops[dep.ID]; ok {
+			if _, ok := hops[dep.NodeID()]; ok {
 				continue
 			}
-			hops[dep.ID] = current + 1
-			queue = append(queue, dep.ID)
+			hops[dep.NodeID()] = current + 1
+			queue = append(queue, dep.NodeID())
 		}
 	}
 	return hops
 }
 
-func importedPackageDepth(pkg *model.Dependency, imports map[string]int) int {
+func importedPackageDepth(pkg *model.DependencyNode, imports map[string]int) int {
 	if depth, ok := imports[importSpecifier(pkg)]; ok {
 		return depth
 	}
@@ -517,7 +542,7 @@ func importedPackageDepth(pkg *model.Dependency, imports map[string]int) int {
 // isPackageImported reports whether pkg's npm name appears in the runner's
 // bare-specifier import set. Used as the seed predicate for the transitive
 // walk.
-func isPackageImported(pkg *model.Dependency, imports map[string]int) bool {
+func isPackageImported(pkg *model.DependencyNode, imports map[string]int) bool {
 	if pkg == nil || len(imports) == 0 {
 		return false
 	}
@@ -534,7 +559,7 @@ func isPackageImported(pkg *model.Dependency, imports map[string]int) bool {
 // "@tailwindcss/postcss" would be seeded as reachable by any `import "postcss"`
 // in the project, and QualifiedName's "tailwindcss:postcss" is not a specifier
 // any module resolver ever produces.
-func importSpecifier(pkg *model.Dependency) string {
+func importSpecifier(pkg *model.DependencyNode) string {
 	if pkg == nil {
 		return ""
 	}
@@ -547,7 +572,7 @@ func annotateProjectUnknown(req model.AnalyzeRequest, projectRoot, reason string
 	}
 	timestamp := now.UTC().Format(time.RFC3339)
 	count := 0
-	for _, pkg := range req.Graph.Nodes() {
+	for _, pkg := range req.Graph.DependencyNodes() {
 		if pkg == nil || !isNPMPackage(pkg) {
 			continue
 		}
@@ -577,7 +602,7 @@ func annotateAllUnknown(req model.AnalyzeRequest, reason string, now time.Time) 
 		return
 	}
 	timestamp := now.UTC().Format(time.RFC3339)
-	for _, pkg := range req.Graph.Nodes() {
+	for _, pkg := range req.Graph.DependencyNodes() {
 		if pkg == nil || !isNPMPackage(pkg) {
 			continue
 		}
@@ -603,7 +628,7 @@ func annotateAllUnknown(req model.AnalyzeRequest, reason string, now time.Time) 
 // to it. In multi-project repos this may over-attribute; the second
 // pass through applyRunnerResult skips already-annotated vulns to
 // avoid double-counting.
-func packageBelongsToProjectRoot(pkg *model.Dependency, projectRoot string) bool {
+func packageBelongsToProjectRoot(pkg *model.DependencyNode, projectRoot string) bool {
 	if pkg == nil {
 		return false
 	}
