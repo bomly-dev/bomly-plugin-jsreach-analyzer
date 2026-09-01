@@ -3,9 +3,14 @@ name: Release
 on:
   workflow_dispatch:
     inputs:
-      version:
-        description: "Release version (e.g. 0.1.0). Must match the version in bomly-plugin.json."
+      bump:
+        description: Version bump type
         required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
 
 permissions:
   contents: write
@@ -18,25 +23,77 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
 
-      - name: Verify manifest version
+      - name: Require main branch
         run: |
-          manifest_version="$(jq -r .version bomly-plugin.json)"
-          if [ "$manifest_version" != "${{ inputs.version }}" ]; then
-            echo "bomly-plugin.json version ($manifest_version) does not match release input (${{ inputs.version }})" >&2
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
+            echo "Release must be run from main, got ${GITHUB_REF}" >&2
             exit 1
           fi
+
+      - name: Compute next version
+        id: version
+        env:
+          BUMP: ${{ inputs.bump }}
+        run: |
+          set -euo pipefail
+          git fetch --tags --force
+          latest_tag="$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n 1)"
+          current="${latest_tag#v}"
+          if [[ -z "${current}" ]]; then
+            current="0.0.0"
+          fi
+          IFS=. read -r major minor patch <<< "${current}"
+          case "${BUMP}" in
+            major) major=$((major + 1)); minor=0; patch=0 ;;
+            minor) minor=$((minor + 1)); patch=0 ;;
+            patch) patch=$((patch + 1)) ;;
+            *) echo "Unsupported bump type ${BUMP}" >&2; exit 1 ;;
+          esac
+          tag="v${major}.${minor}.${patch}"
+          if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+            echo "Tag ${tag} already exists" >&2
+            exit 1
+          fi
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "version=${major}.${minor}.${patch}" >> "$GITHUB_OUTPUT"
 
       - name: Test
         run: go test ./...
 
+      - name: Sync plugin manifest and tag
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          # The manifest ships inside every release archive, so a stale version
+          # there means an installed plugin misreports itself. It is derived
+          # from the release rather than maintained by hand, and committed
+          # before the tag so the tag points at the manifest it ships.
+          tmp="$(mktemp)"
+          jq --arg v "${VERSION}" '.version = $v' bomly-plugin.json > "${tmp}"
+          mv "${tmp}" bomly-plugin.json
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if ! git diff --quiet -- bomly-plugin.json; then
+            git add bomly-plugin.json
+            git commit -m "chore: release ${TAG}"
+            git push origin HEAD:main
+          fi
+          git tag -a "${TAG}" -m "Release ${TAG}"
+          git push origin "${TAG}"
+
       - name: Build and package
         run: |
           set -euo pipefail
-          version="${{ inputs.version }}"
+          version="${{ steps.version.outputs.version }}"
           mkdir -p dist
           for platform in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
             goos="${platform%/*}"
@@ -67,7 +124,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "v${{ inputs.version }}" \
-            --title "v${{ inputs.version }}" \
+          gh release create "${{ steps.version.outputs.tag }}" \
+            --title "${{ steps.version.outputs.tag }}" \
             --generate-notes \
             dist/*.tar.gz dist/*.zip dist/SHA256SUMS
