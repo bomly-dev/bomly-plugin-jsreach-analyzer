@@ -581,7 +581,7 @@ func importSpecifier(pkg *model.DependencyNode) string {
 // "unreachable" and B failing to resolve its entry points, the skip dropped B
 // entirely and the summary read "unreachable" for a workspace half of which
 // was never looked at. DeriveReachability requires every root to say
-// unreachable, so B'"'"'s unknown is exactly what keeps the aggregate honest --
+// unreachable, so B's unknown is exactly what keeps the aggregate honest --
 // but only if it is recorded.
 func annotateProjectUnknown(req model.AnalyzeRequest, attributor rootAttributor, projectRoot, reason string, now time.Time) int {
 	if req.Graph == nil {

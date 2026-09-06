@@ -39,12 +39,12 @@ const (
 	// attributedToSite: a site names this root, or lies under it. The
 	// occurrence is established and the evidence may name the node.
 	//
-	// This is jsreach'"'"'s own attribution source, per row 2.8: an npm package
+	// This is jsreach's own attribution source, per row 2.8: an npm package
 	// is installed inside the tree it belongs to, so a nested
 	// node_modules copy and a hoisted top-level one are two sites under two
 	// different roots, and their paths say which is which. The hop map is
 	// keyed by node ID, so the two copies can and do receive different
-	// statuses -- a nested copy is only reachable through its own parent'"'"'s
+	// statuses -- a nested copy is only reachable through its own parent's
 	// edges.
 	attributedToSite
 )
@@ -127,7 +127,7 @@ func (a rootAttributor) attribute(node *model.DependencyNode, root string) rootA
 			sitedInAnotherRoot = true
 		}
 	}
-	// Two ways to know the node is not ours, and both need the run'"'"'s own
+	// Two ways to know the node is not ours, and both need the run's own
 	// roots to say so. A site under another root this run analyzes is
 	// positive evidence of absence: the package is installed in a tree we
 	// know about and it is not this one. A site whose path is under no
