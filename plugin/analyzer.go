@@ -119,6 +119,7 @@ func (a Analyzer) Analyze(ctx context.Context, req model.AnalyzeRequest) (model.
 
 	overallStart := time.Now()
 	hierarchies := discoverWorkspaceHierarchies(req)
+	attributor := newRootAttributor(req.Graph, workspaceHierarchyRoots(hierarchies))
 	if len(hierarchies) == 0 {
 		logger.Info("jsreach: no npm project roots discovered; marking all npm vulnerabilities as unknown")
 		annotateAllUnknown(req, "no-project-root-discovered", time.Now())
@@ -142,7 +143,7 @@ func (a Analyzer) Analyze(ctx context.Context, req model.AnalyzeRequest) (model.
 		case <-ctx.Done():
 			logger.Info("jsreach: context cancelled; skipping project",
 				zap.String("project_root", root))
-			annotateProjectUnknown(req, root, "cancelled", time.Now())
+			annotateProjectUnknown(req, attributor, root, "cancelled", time.Now())
 			continue
 		default:
 		}
@@ -153,10 +154,10 @@ func (a Analyzer) Analyze(ctx context.Context, req model.AnalyzeRequest) (model.
 		cacheMisses += misses
 		var applied applyOutcome
 		if closure.incomplete {
-			added := annotateProjectUnknown(req, root, closure.reason, time.Now())
+			added := annotateProjectUnknown(req, attributor, root, closure.reason, time.Now())
 			applied.unknown += added
 		} else {
-			applied = applyImportedPackageSeeds(req, root, closure.importedPackages, closure.dynamicImports, time.Now())
+			applied = applyImportedPackageSeeds(req, attributor, root, closure.importedPackages, closure.dynamicImports, time.Now())
 		}
 		stats.Reachable += applied.reachable
 		stats.Unreachable += applied.unreachable
@@ -401,11 +402,11 @@ type applyOutcome struct {
 // missed otherwise. The closure follows Graph.Dependencies edges, so
 // it sees exactly the dep tree the npm detector resolved from the
 // lockfile.
-func applyRunnerResult(req model.AnalyzeRequest, projectRoot string, runRes RunnerResult, now time.Time) applyOutcome {
-	return applyImportedPackageSeeds(req, projectRoot, packageSeedDepths(runRes.ImportedPackages, 0), runRes.DynamicImportsDetected, now)
+func applyRunnerResult(req model.AnalyzeRequest, attributor rootAttributor, projectRoot string, runRes RunnerResult, now time.Time) applyOutcome {
+	return applyImportedPackageSeeds(req, attributor, projectRoot, packageSeedDepths(runRes.ImportedPackages, 0), runRes.DynamicImportsDetected, now)
 }
 
-func applyImportedPackageSeeds(req model.AnalyzeRequest, projectRoot string, imports map[string]int, dynamicImports bool, now time.Time) applyOutcome {
+func applyImportedPackageSeeds(req model.AnalyzeRequest, attributor rootAttributor, projectRoot string, imports map[string]int, dynamicImports bool, now time.Time) applyOutcome {
 	var outcome applyOutcome
 	if req.Graph == nil {
 		return outcome
@@ -416,7 +417,8 @@ func applyImportedPackageSeeds(req model.AnalyzeRequest, projectRoot string, imp
 		if pkg == nil || !isNPMPackage(pkg) {
 			continue
 		}
-		if !packageBelongsToProjectRoot(pkg, projectRoot) {
+		attributed := attributor.attribute(pkg, projectRoot)
+		if attributed == attributedElsewhere {
 			continue
 		}
 		vulns := vulnerabilitiesForDep(req, pkg)
@@ -428,14 +430,19 @@ func applyImportedPackageSeeds(req model.AnalyzeRequest, projectRoot string, imp
 			// project root now contributes evidence and the annotation is
 			// the derived summary over all of them.
 			r := &model.ReachabilityEvidence{
-				ModuleRoot: projectRoot,
-				// jsreach resolves per project root, and the hop map is keyed
-				// by node, so the finding is attributable to this occurrence.
-				DependencyRefs:         []string{pkg.NodeID()},
+				ModuleRoot:             projectRoot,
 				Analyzer:               Name,
 				AnalyzedAt:             timestamp,
 				Tier:                   model.TierPackage,
 				DynamicImportsDetected: dynamicImports,
+			}
+			if attributed == attributedToSite {
+				// Named only when a site put this copy in this root. The hop
+				// map is keyed by node ID, so a nested node_modules copy and
+				// a hoisted one are separately decided -- but only a site can
+				// say which root a copy is installed under, and without one
+				// the module root is the whole claim.
+				r.DependencyRefs = []string{pkg.NodeID()}
 			}
 			if hops, ok := hopsByID[pkg.NodeID()]; ok {
 				r.Status = model.ReachabilityReachable
@@ -566,7 +573,17 @@ func importSpecifier(pkg *model.DependencyNode) string {
 	return strings.TrimSpace(pkg.EcosystemName())
 }
 
-func annotateProjectUnknown(req model.AnalyzeRequest, projectRoot, reason string, now time.Time) int {
+// annotateProjectUnknown records that one project root could not be analyzed.
+//
+// It deliberately does not skip a vulnerability another root already
+// annotated. That skip was the same first-root-wins loss phase 2.8 removes,
+// left standing in the failure path: with roots A and B, A succeeding with
+// "unreachable" and B failing to resolve its entry points, the skip dropped B
+// entirely and the summary read "unreachable" for a workspace half of which
+// was never looked at. DeriveReachability requires every root to say
+// unreachable, so B'"'"'s unknown is exactly what keeps the aggregate honest --
+// but only if it is recorded.
+func annotateProjectUnknown(req model.AnalyzeRequest, attributor rootAttributor, projectRoot, reason string, now time.Time) int {
 	if req.Graph == nil {
 		return 0
 	}
@@ -576,21 +593,19 @@ func annotateProjectUnknown(req model.AnalyzeRequest, projectRoot, reason string
 		if pkg == nil || !isNPMPackage(pkg) {
 			continue
 		}
-		if !packageBelongsToProjectRoot(pkg, projectRoot) {
+		if attributor.attribute(pkg, projectRoot) == attributedElsewhere {
 			continue
 		}
 		vulns := vulnerabilitiesForDep(req, pkg)
 		for i := range vulns {
-			if vulns[i].Reachability != nil {
-				continue
-			}
-			vulns[i].Reachability = &model.Reachability{
+			vulns[i].Reachability = withEvidence(vulns[i].Reachability, model.ReachabilityEvidence{
+				ModuleRoot: projectRoot,
 				Analyzer:   Name,
 				Status:     model.ReachabilityUnknown,
 				Tier:       model.TierNone,
 				Reason:     reason,
 				AnalyzedAt: timestamp,
-			}
+			}, timestamp)
 			count++
 		}
 	}
@@ -608,43 +623,19 @@ func annotateAllUnknown(req model.AnalyzeRequest, reason string, now time.Time) 
 		}
 		vulns := vulnerabilitiesForDep(req, pkg)
 		for i := range vulns {
-			if vulns[i].Reachability != nil {
-				continue
-			}
-			vulns[i].Reachability = &model.Reachability{
+			// One evidence record with no module root, which the SDK reads as
+			// a whole-scan claim covering every site. A bare annotation would
+			// leave consumers unable to tell an empty evidence list meaning
+			// "nothing was recorded" from one meaning "no root was found".
+			vulns[i].Reachability = withEvidence(vulns[i].Reachability, model.ReachabilityEvidence{
 				Analyzer:   Name,
 				Status:     model.ReachabilityUnknown,
 				Tier:       model.TierNone,
 				Reason:     reason,
 				AnalyzedAt: timestamp,
-			}
+			}, timestamp)
 		}
 	}
-}
-
-// packageBelongsToProjectRoot is a best-effort attribution. jsreach
-// runs per-project, so any npm package physically located under
-// projectRoot (or with no recorded location) is treated as belonging
-// to it. In multi-project repos this may over-attribute; the second
-// pass through applyRunnerResult skips already-annotated vulns to
-// avoid double-counting.
-func packageBelongsToProjectRoot(pkg *model.DependencyNode, projectRoot string) bool {
-	if pkg == nil {
-		return false
-	}
-	if len(pkg.Locations) == 0 {
-		return true
-	}
-	for _, loc := range pkg.Locations {
-		path := loc.RealPath
-		if path == "" {
-			continue
-		}
-		if pathContainsRoot(path, projectRoot) {
-			return true
-		}
-	}
-	return true
 }
 
 func pathContainsRoot(path, root string) bool {
