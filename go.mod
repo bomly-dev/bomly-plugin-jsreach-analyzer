@@ -3,7 +3,7 @@ module github.com/bomly-dev/bomly-plugin-jsreach-analyzer
 go 1.27.0
 
 require (
-	github.com/bomly-dev/bomly-sdk v0.9.3
+	github.com/bomly-dev/bomly-sdk v0.9.7
 	github.com/evanw/esbuild v0.28.1
 	go.uber.org/zap v1.28.0
 	gopkg.in/yaml.v3 v3.0.1

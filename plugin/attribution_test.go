@@ -75,7 +75,7 @@ func TestEvidenceIsKeyedByTheProjectRootThatEstablishedIt(t *testing.T) {
 	webDep := npmNodeAt(t, "express", "4.18.2", filepath.Join(webRoot, "node_modules", "express"), "")
 	g, registry := npmGraph(t, []*model.DependencyNode{apiDep, webDep}, []string{"GHSA-1", "GHSA-2"})
 
-	attributor := newRootAttributor(g, []string{apiRoot, webRoot})
+	attributor := model.NewRootAttributor([]string{apiRoot, webRoot}, g)
 	for _, root := range []string{apiRoot, webRoot} {
 		applyImportedPackageSeeds(model.AnalyzeRequest{Graph: g, Registry: registry}, attributor, root, nil, false, time.Time{})
 	}
@@ -106,7 +106,7 @@ func TestNestedCopyIsNamedSeparatelyFromTheHoistedOne(t *testing.T) {
 	nested := npmNodeAt(t, "lodash", "3.10.1", filepath.Join(webRoot, "node_modules", "legacy", "node_modules", "lodash"), "")
 	g, registry := npmGraph(t, []*model.DependencyNode{hoisted, nested}, []string{"GHSA-1", "GHSA-1"})
 
-	attributor := newRootAttributor(g, []string{apiRoot, webRoot})
+	attributor := model.NewRootAttributor([]string{apiRoot, webRoot}, g)
 	// api imports lodash; web's build is not analyzed in this call.
 	applyImportedPackageSeeds(model.AnalyzeRequest{Graph: g, Registry: registry}, attributor, apiRoot,
 		map[string]int{"lodash": 0}, false, time.Time{})
@@ -138,7 +138,7 @@ func TestUnattributedPackageKeepsTheRootFloorWithoutRefs(t *testing.T) {
 	g, registry := npmGraph(t, []*model.DependencyNode{dep}, []string{"GHSA-1"})
 
 	applyImportedPackageSeeds(model.AnalyzeRequest{Graph: g, Registry: registry},
-		newRootAttributor(g, []string{root}), root, map[string]int{"lodash": 0}, false, time.Time{})
+		model.NewRootAttributor([]string{root}, g), root, map[string]int{"lodash": 0}, false, time.Time{})
 
 	evidence := npmReachability(t, registry, dep.PackageRef).Evidence
 	if len(evidence) != 1 {
@@ -165,7 +165,7 @@ func TestSiteOutsideEveryAnalyzedRootIsNotAbsence(t *testing.T) {
 	g, registry := npmGraph(t, []*model.DependencyNode{dep}, []string{"GHSA-1"})
 
 	applyImportedPackageSeeds(model.AnalyzeRequest{Graph: g, Registry: registry},
-		newRootAttributor(g, []string{root}), root, map[string]int{"lodash": 0}, false, time.Time{})
+		model.NewRootAttributor([]string{root}, g), root, map[string]int{"lodash": 0}, false, time.Time{})
 
 	r := npmReachability(t, registry, dep.PackageRef)
 	if r == nil || len(r.Evidence) != 1 {
@@ -195,7 +195,7 @@ func TestFailedProjectRootStillContributesUnknownEvidence(t *testing.T) {
 	g, registry := npmGraph(t, []*model.DependencyNode{dep}, []string{"GHSA-1"})
 	req := model.AnalyzeRequest{Graph: g, Registry: registry}
 
-	attributor := newRootAttributor(g, []string{apiRoot, webRoot})
+	attributor := model.NewRootAttributor([]string{apiRoot, webRoot}, g)
 	// api analyzed and found nothing; web's entry points could not be resolved.
 	applyImportedPackageSeeds(req, attributor, apiRoot, nil, false, time.Time{})
 	annotateProjectUnknown(req, attributor, webRoot, "no-entry-points", time.Time{})
@@ -221,7 +221,7 @@ func TestDeclaredRootsAreOnlyTrustedWhenTheyShareOurVocabulary(t *testing.T) {
 	g, registry := npmGraph(t, []*model.DependencyNode{dep}, []string{"GHSA-1"})
 
 	applyImportedPackageSeeds(model.AnalyzeRequest{Graph: g, Registry: registry},
-		newRootAttributor(g, []string{root}), root, nil, false, time.Time{})
+		model.NewRootAttributor([]string{root}, g), root, nil, false, time.Time{})
 
 	r := npmReachability(t, registry, dep.PackageRef)
 	if r == nil || len(r.Evidence) == 0 {
@@ -242,16 +242,16 @@ func TestAttributorCalibratesOnOverlap(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	shared := newRootAttributor(g, []string{"/ws/api", "/ws/web"})
-	if got := shared.attribute(node, "/ws/api"); got != attributedToSite {
-		t.Errorf("attribute(own root) = %v, want attributedToSite", got)
+	shared := model.NewRootAttributor([]string{"/ws/api", "/ws/web"}, g)
+	if got := shared.Attribute(node, "/ws/api"); got != model.AttributedToSite {
+		t.Errorf("attribute(own root) = %v, want attributed-to-site", got)
 	}
-	if got := shared.attribute(node, "/ws/web"); got != attributedElsewhere {
-		t.Errorf("attribute(other root) = %v, want attributedElsewhere", got)
+	if got := shared.Attribute(node, "/ws/web"); got != model.AttributedElsewhere {
+		t.Errorf("attribute(other root) = %v, want attributed-elsewhere", got)
 	}
 
-	foreign := newRootAttributor(g, []string{"/other/one"})
-	if got := foreign.attribute(node, "/other/one"); got != attributedToRootOnly {
-		t.Errorf("attribute under a foreign vocabulary = %v, want attributedToRootOnly", got)
+	foreign := model.NewRootAttributor([]string{"/other/one"}, g)
+	if got := foreign.Attribute(node, "/other/one"); got != model.AttributedToRootOnly {
+		t.Errorf("attribute under a foreign vocabulary = %v, want attributed-to-root-only", got)
 	}
 }

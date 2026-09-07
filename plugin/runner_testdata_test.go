@@ -108,7 +108,7 @@ func TestJSStandaloneApplyRunnerResult(t *testing.T) {
 	reg.Ensure(purl).Vulnerabilities = []model.Vulnerability{{ID: "GHSA-1"}}
 	req := model.AnalyzeRequest{Graph: g, Registry: reg}
 	root := jsProjectFixture("entrypoints")
-	got := applyRunnerResult(req, newRootAttributor(g, []string{root}), root, RunnerResult{
+	got := applyRunnerResult(req, model.NewRootAttributor([]string{root}, g), root, RunnerResult{
 		ImportedPackages: map[string]struct{}{"lodash": {}},
 		EntryPoints:      []string{"index.js"},
 	}, time.Time{})

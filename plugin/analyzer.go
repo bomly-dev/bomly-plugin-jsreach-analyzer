@@ -2,7 +2,6 @@ package plugin
 
 import (
 	"context"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -119,7 +118,7 @@ func (a Analyzer) Analyze(ctx context.Context, req model.AnalyzeRequest) (model.
 
 	overallStart := time.Now()
 	hierarchies := discoverWorkspaceHierarchies(req)
-	attributor := newRootAttributor(req.Graph, workspaceHierarchyRoots(hierarchies))
+	attributor := model.NewRootAttributor(workspaceHierarchyRoots(hierarchies), req.Graph)
 	if len(hierarchies) == 0 {
 		logger.Info("jsreach: no npm project roots discovered; marking all npm vulnerabilities as unknown")
 		annotateAllUnknown(req, "no-project-root-discovered", time.Now())
@@ -402,11 +401,11 @@ type applyOutcome struct {
 // missed otherwise. The closure follows Graph.Dependencies edges, so
 // it sees exactly the dep tree the npm detector resolved from the
 // lockfile.
-func applyRunnerResult(req model.AnalyzeRequest, attributor rootAttributor, projectRoot string, runRes RunnerResult, now time.Time) applyOutcome {
+func applyRunnerResult(req model.AnalyzeRequest, attributor model.RootAttributor, projectRoot string, runRes RunnerResult, now time.Time) applyOutcome {
 	return applyImportedPackageSeeds(req, attributor, projectRoot, packageSeedDepths(runRes.ImportedPackages, 0), runRes.DynamicImportsDetected, now)
 }
 
-func applyImportedPackageSeeds(req model.AnalyzeRequest, attributor rootAttributor, projectRoot string, imports map[string]int, dynamicImports bool, now time.Time) applyOutcome {
+func applyImportedPackageSeeds(req model.AnalyzeRequest, attributor model.RootAttributor, projectRoot string, imports map[string]int, dynamicImports bool, now time.Time) applyOutcome {
 	var outcome applyOutcome
 	if req.Graph == nil {
 		return outcome
@@ -417,8 +416,8 @@ func applyImportedPackageSeeds(req model.AnalyzeRequest, attributor rootAttribut
 		if pkg == nil || !isNPMPackage(pkg) {
 			continue
 		}
-		attributed := attributor.attribute(pkg, projectRoot)
-		if attributed == attributedElsewhere {
+		attributed := attributor.Attribute(pkg, projectRoot)
+		if attributed == model.AttributedElsewhere {
 			continue
 		}
 		vulns := vulnerabilitiesForDep(req, pkg)
@@ -436,7 +435,7 @@ func applyImportedPackageSeeds(req model.AnalyzeRequest, attributor rootAttribut
 				Tier:                   model.TierPackage,
 				DynamicImportsDetected: dynamicImports,
 			}
-			if attributed == attributedToSite {
+			if attributed == model.AttributedToSite {
 				// Named only when a site put this copy in this root. The hop
 				// map is keyed by node ID, so a nested node_modules copy and
 				// a hoisted one are separately decided -- but only a site can
@@ -583,7 +582,7 @@ func importSpecifier(pkg *model.DependencyNode) string {
 // was never looked at. DeriveReachability requires every root to say
 // unreachable, so B's unknown is exactly what keeps the aggregate honest --
 // but only if it is recorded.
-func annotateProjectUnknown(req model.AnalyzeRequest, attributor rootAttributor, projectRoot, reason string, now time.Time) int {
+func annotateProjectUnknown(req model.AnalyzeRequest, attributor model.RootAttributor, projectRoot, reason string, now time.Time) int {
 	if req.Graph == nil {
 		return 0
 	}
@@ -593,7 +592,7 @@ func annotateProjectUnknown(req model.AnalyzeRequest, attributor rootAttributor,
 		if pkg == nil || !isNPMPackage(pkg) {
 			continue
 		}
-		if attributor.attribute(pkg, projectRoot) == attributedElsewhere {
+		if attributor.Attribute(pkg, projectRoot) == model.AttributedElsewhere {
 			continue
 		}
 		vulns := vulnerabilitiesForDep(req, pkg)
@@ -636,16 +635,6 @@ func annotateAllUnknown(req model.AnalyzeRequest, reason string, now time.Time) 
 			}, timestamp)
 		}
 	}
-}
-
-func pathContainsRoot(path, root string) bool {
-	cleanPath := filepath.Clean(path)
-	cleanRoot := filepath.Clean(root)
-	rel, err := filepath.Rel(cleanRoot, cleanPath)
-	if err != nil {
-		return false
-	}
-	return !strings.HasPrefix(rel, "..")
 }
 
 // failureReason maps runner errors to stable machine-readable codes.
