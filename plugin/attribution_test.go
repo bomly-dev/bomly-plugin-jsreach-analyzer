@@ -91,11 +91,19 @@ func TestEvidenceIsKeyedByTheProjectRootThatEstablishedIt(t *testing.T) {
 	}
 }
 
-// TestNestedCopyIsNamedSeparatelyFromTheHoistedOne pins jsreach's own
-// attribution source, which row 2.8 names: npm installs a package inside the
-// tree that uses it, so a nested node_modules copy and a hoisted one are two
-// occurrences at two paths, and the paths say which root each belongs to.
-func TestNestedCopyIsNamedSeparatelyFromTheHoistedOne(t *testing.T) {
+// TestNestedCopyIsDecidedByPathNotNamedAsAnOccurrence pins what the install
+// paths do and do not establish.
+//
+// They do say which root each copy belongs to: npm installs a package inside
+// the tree that uses it, so a hoisted copy and a nested one sit at two paths
+// and only one of them is under the root being analyzed. That much is real,
+// and it is why the nested copy must not collect the other root's finding.
+//
+// They do not say which of two same-name installations an import resolved to.
+// Seeding matches on the bare specifier, so one `import "lodash"` seeds both
+// copies; naming either as the occurrence would be a guess. The evidence
+// carries the root and no refs.
+func TestNestedCopyIsDecidedByPathNotNamedAsAnOccurrence(t *testing.T) {
 	workspace := t.TempDir()
 	apiRoot := filepath.Join(workspace, "apps", "api")
 	webRoot := filepath.Join(workspace, "apps", "web")
@@ -118,8 +126,13 @@ func TestNestedCopyIsNamedSeparatelyFromTheHoistedOne(t *testing.T) {
 	if hoistedEvidence[0].Status != model.ReachabilityReachable {
 		t.Errorf("hoisted status = %q, want reachable", hoistedEvidence[0].Status)
 	}
-	if got := hoistedEvidence[0].DependencyRefs; len(got) != 1 || got[0] != hoisted.NodeID() {
-		t.Errorf("hoisted refs = %v, want [%s]", got, hoisted.NodeID())
+	if got := hoistedEvidence[0].DependencyRefs; len(got) != 0 {
+		t.Errorf("hoisted refs = %v; a site says which root a copy is in, not which "+
+			"same-name installation the import resolved to", got)
+	}
+	if hoistedEvidence[0].ModuleRoot != apiRoot {
+		t.Errorf("module root = %q, want %q: the floor is the whole claim here",
+			hoistedEvidence[0].ModuleRoot, apiRoot)
 	}
 
 	if r := npmReachability(t, registry, nested.PackageRef); r != nil {

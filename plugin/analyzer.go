@@ -435,14 +435,21 @@ func applyImportedPackageSeeds(req model.AnalyzeRequest, attributor model.RootAt
 				Tier:                   model.TierPackage,
 				DynamicImportsDetected: dynamicImports,
 			}
-			if attributed == model.AttributedToSite {
-				// Named only when a site put this copy in this root. The hop
-				// map is keyed by node ID, so a nested node_modules copy and
-				// a hoisted one are separately decided -- but only a site can
-				// say which root a copy is installed under, and without one
-				// the module root is the whole claim.
-				r.DependencyRefs = []string{pkg.NodeID()}
-			}
+			// No DependencyRefs. A site proves this copy is installed under
+			// this root; it does not say which same-name installation the
+			// import resolved to, and that is what a ref claims.
+			//
+			// The hop map being keyed by node ID looked like it settled this,
+			// and does not: seeding matches on the bare specifier, so one
+			// `import "lodash"` seeds a hoisted lodash@4 and a nested
+			// lodash@3 alike. Separate entries, one name match -- naming
+			// either as the occurrence is a guess wearing precision.
+			//
+			// Attributable once the runner reports the resolved path or
+			// version for an import, or once imports are resolved against
+			// their importer's location. Until then the module root is the
+			// whole claim, as it is in pyreach and jvmreach for the same
+			// reason.
 			if hops, ok := hopsByID[pkg.NodeID()]; ok {
 				r.Status = model.ReachabilityReachable
 				h := hops
