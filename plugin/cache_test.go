@@ -150,7 +150,7 @@ func TestAnalyzerDisableCacheAlwaysRunsRunner(t *testing.T) {
 	}
 	a := Analyzer{Runner: runner, CacheDir: t.TempDir(), DisableCache: true}
 
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		g, reg := newSeed()
 		addNPMDep(t, g, reg, projectDir, "", "react", "1.0.0", vuln)
 		if _, err := a.Analyze(context.Background(), model.AnalyzeRequest{Graph: g, Registry: reg, ProjectPath: projectDir}); err != nil {

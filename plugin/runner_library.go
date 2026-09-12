@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"runtime/debug"
+	"strings"
 	"time"
 
 	"github.com/evanw/esbuild/pkg/api"
@@ -196,15 +197,15 @@ func summarizeMessages(messages []api.Message, n int) string {
 	if n > len(messages) {
 		n = len(messages)
 	}
-	out := ""
+	var out strings.Builder
 	for i := 0; i < n; i++ {
 		if i > 0 {
-			out += "; "
+			out.WriteString("; ")
 		}
-		out += messages[i].Text
+		out.WriteString(messages[i].Text)
 	}
 	if len(messages) > n {
-		out += fmt.Sprintf(" (+%d more)", len(messages)-n)
+		out.WriteString(fmt.Sprintf(" (+%d more)", len(messages)-n))
 	}
-	return out
+	return out.String()
 }
