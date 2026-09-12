@@ -4,7 +4,7 @@ go 1.27.0
 
 require (
 	github.com/bomly-dev/bomly-sdk v0.10.0
-	github.com/evanw/esbuild v0.28.1
+	github.com/evanw/esbuild v0.28.2
 	go.uber.org/zap v1.28.0
 	gopkg.in/yaml.v3 v3.0.1
 )
