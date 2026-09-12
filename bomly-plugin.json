@@ -2,7 +2,7 @@
   "schemaVersion": "bomly.plugin.package.v1",
   "id": "jsreach",
   "name": "jsreach Reachability Analyzer",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "kind": "analyzer",
   "runtime": "hashicorp-grpc",
   "pluginApiVersion": "bomly.plugin.v1",
