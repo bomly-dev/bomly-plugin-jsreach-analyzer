@@ -8,10 +8,12 @@ import (
 	"sort"
 	"strings"
 
-	model "github.com/bomly-dev/bomly-sdk"
 	"gopkg.in/yaml.v3"
 
 	"github.com/bomly-dev/bomly-sdk/system"
+
+	sdkmodel "github.com/bomly-dev/bomly-sdk/model"
+	sdkplugin "github.com/bomly-dev/bomly-sdk/plugin"
 )
 
 type workspaceMember struct {
@@ -41,7 +43,7 @@ type workspaceHierarchy struct {
 //
 // Paths are normalized with filepath.Clean. Duplicates are removed and
 // results are sorted for deterministic ordering.
-func discoverProjectRoots(req model.AnalyzeRequest) []string {
+func discoverProjectRoots(req sdkplugin.AnalyzeRequest) []string {
 	hierarchies := discoverWorkspaceHierarchies(req)
 	roots := make([]string, 0, len(hierarchies))
 	for _, hierarchy := range hierarchies {
@@ -50,7 +52,7 @@ func discoverProjectRoots(req model.AnalyzeRequest) []string {
 	return roots
 }
 
-func discoverWorkspaceHierarchies(req model.AnalyzeRequest) []workspaceHierarchy {
+func discoverWorkspaceHierarchies(req sdkplugin.AnalyzeRequest) []workspaceHierarchy {
 	packageRoots := discoverPackageRoots(req)
 	seen := make(map[string]struct{})
 	hierarchies := make([]workspaceHierarchy, 0, len(packageRoots))
@@ -74,7 +76,7 @@ func discoverWorkspaceHierarchies(req model.AnalyzeRequest) []workspaceHierarchy
 	return hierarchies
 }
 
-func discoverPackageRoots(req model.AnalyzeRequest) []string {
+func discoverPackageRoots(req sdkplugin.AnalyzeRequest) []string {
 	seen := make(map[string]struct{})
 	roots := make([]string, 0)
 
@@ -325,19 +327,19 @@ func isInsideNodeModules(dir string) bool {
 
 // isNPMPackage reports whether pkg's ecosystem or build system
 // identifies it as an npm package. Mirrors govulncheck.isGoPackage.
-func isNPMPackage(pkg *model.DependencyNode) bool {
+func isNPMPackage(pkg *sdkmodel.DependencyNode) bool {
 	if pkg == nil {
 		return false
 	}
-	if pkg.Ecosystem == model.EcosystemNPM {
+	if pkg.Ecosystem == sdkmodel.EcosystemNPM {
 		return true
 	}
 	switch pkg.PackageManager {
-	case model.PackageManagerNPM, model.PackageManagerPNPM, model.PackageManagerYarn:
+	case sdkmodel.PackageManagerNPM, sdkmodel.PackageManagerPNPM, sdkmodel.PackageManagerYarn:
 		return true
 	}
 	switch pkg.Language {
-	case model.LanguageJavaScript, model.LanguageTypeScript:
+	case sdkmodel.LanguageJavaScript, sdkmodel.LanguageTypeScript:
 		return true
 	}
 	return false

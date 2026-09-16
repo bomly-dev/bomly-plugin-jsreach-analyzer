@@ -9,8 +9,10 @@ import (
 	"sort"
 	"testing"
 
-	model "github.com/bomly-dev/bomly-sdk"
 	"github.com/bomly-dev/bomly-sdk/testkit"
+
+	sdkmodel "github.com/bomly-dev/bomly-sdk/model"
+	sdkplugin "github.com/bomly-dev/bomly-sdk/plugin"
 )
 
 func workspaceFixture(name string) string {
@@ -65,7 +67,7 @@ func TestDiscoverWorkspaceHierarchiesFromTestdata(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			root := workspaceFixture(tc.start)
-			hierarchies := discoverWorkspaceHierarchies(model.AnalyzeRequest{ProjectPath: root})
+			hierarchies := discoverWorkspaceHierarchies(sdkplugin.AnalyzeRequest{ProjectPath: root})
 			if len(hierarchies) != 1 {
 				t.Fatalf("hierarchies = %+v, want one", hierarchies)
 			}
@@ -80,17 +82,17 @@ func TestDiscoverWorkspaceHierarchiesFromTestdata(t *testing.T) {
 
 func TestDiscoverProjectRootsDeduplicatesGraphAndTargetSources(t *testing.T) {
 	root := workspaceFixture("npm-array")
-	g := model.New()
-	pkg := testkit.MustDependencyCoords(t, model.Coordinates{Name: "lodash",
-		Ecosystem: model.EcosystemNPM})
-	pkg.Locations = []model.PackageLocation{{RealPath: filepath.Join(root, "package-lock.json")}}
+	g := sdkmodel.New()
+	pkg := testkit.MustDependencyCoords(t, sdkmodel.Coordinates{Name: "lodash",
+		Ecosystem: sdkmodel.EcosystemNPM})
+	pkg.Locations = []sdkmodel.PackageLocation{{RealPath: filepath.Join(root, "package-lock.json")}}
 	if err := g.AddNode(pkg); err != nil {
 		t.Fatal(err)
 	}
-	got := discoverProjectRoots(model.AnalyzeRequest{
+	got := discoverProjectRoots(sdkplugin.AnalyzeRequest{
 		Graph:       g,
 		ProjectPath: filepath.Join(root, "packages", "app"),
-		ExecutionTarget: model.ExecutionTarget{
+		ExecutionTarget: sdkplugin.ExecutionTarget{
 			Location: filepath.Join(root, "nested", "children", "leaf"),
 		},
 	})
@@ -193,27 +195,27 @@ func TestAnalyzerBuiltInRunnerTraversesWorkspaceTestdata(t *testing.T) {
 	if _, ok := sharedResult.ImportedPackages["lodash"]; !ok {
 		t.Fatalf("shared imports = %v, want lodash", sharedResult.ImportedPackages)
 	}
-	g := model.New()
-	reg := model.NewPackageRegistry()
+	g := sdkmodel.New()
+	reg := sdkmodel.NewPackageRegistry()
 	lodashPURL := "pkg:npm/lodash@1"
 	leftPadPURL := "pkg:npm/left-pad@1"
-	lodash := testkit.MustDependencyCoords(t, model.Coordinates{Name: "lodash", Version: "1", Ecosystem: model.EcosystemNPM, PURL: lodashPURL})
-	leftPad := testkit.MustDependencyCoords(t, model.Coordinates{Name: "left-pad", Version: "1", Ecosystem: model.EcosystemNPM, PURL: leftPadPURL})
-	reg.Ensure(lodashPURL).Vulnerabilities = []model.Vulnerability{{ID: "lodash"}}
-	reg.Ensure(leftPadPURL).Vulnerabilities = []model.Vulnerability{{ID: "left-pad"}}
+	lodash := testkit.MustDependencyCoords(t, sdkmodel.Coordinates{Name: "lodash", Version: "1", Ecosystem: sdkmodel.EcosystemNPM, PURL: lodashPURL})
+	leftPad := testkit.MustDependencyCoords(t, sdkmodel.Coordinates{Name: "left-pad", Version: "1", Ecosystem: sdkmodel.EcosystemNPM, PURL: leftPadPURL})
+	reg.Ensure(lodashPURL).Vulnerabilities = []sdkmodel.Vulnerability{{ID: "lodash"}}
+	reg.Ensure(leftPadPURL).Vulnerabilities = []sdkmodel.Vulnerability{{ID: "left-pad"}}
 	if err := g.AddNode(lodash); err != nil {
 		t.Fatal(err)
 	}
 	if err := g.AddNode(leftPad); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := (Analyzer{DisableCache: true, Runner: runner}).Analyze(context.Background(), model.AnalyzeRequest{Graph: g, Registry: reg, ProjectPath: root}); err != nil {
+	if _, err := (Analyzer{DisableCache: true, Runner: runner}).Analyze(context.Background(), sdkplugin.AnalyzeRequest{Graph: g, Registry: reg, ProjectPath: root}); err != nil {
 		t.Fatal(err)
 	}
-	if got := reg.Ensure(lodashPURL).Vulnerabilities[0].Reachability; got == nil || got.Status != model.ReachabilityReachable || got.Hops == nil || *got.Hops != 1 {
+	if got := reg.Ensure(lodashPURL).Vulnerabilities[0].Reachability; got == nil || got.Status != sdkmodel.ReachabilityReachable || got.Hops == nil || *got.Hops != 1 {
 		t.Fatalf("lodash reachability = %+v, want reachable at workspace hop 1", got)
 	}
-	if got := reg.Ensure(leftPadPURL).Vulnerabilities[0].Reachability; got == nil || got.Status != model.ReachabilityUnreachable {
+	if got := reg.Ensure(leftPadPURL).Vulnerabilities[0].Reachability; got == nil || got.Status != sdkmodel.ReachabilityUnreachable {
 		t.Fatalf("left-pad reachability = %+v, want unreachable from unused workspace", got)
 	}
 }
