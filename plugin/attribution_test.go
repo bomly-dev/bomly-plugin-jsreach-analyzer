@@ -5,20 +5,22 @@ import (
 	"testing"
 	"time"
 
-	model "github.com/bomly-dev/bomly-sdk"
 	"github.com/bomly-dev/bomly-sdk/testkit"
+
+	sdkmodel "github.com/bomly-dev/bomly-sdk/model"
+	sdkplugin "github.com/bomly-dev/bomly-sdk/plugin"
 )
 
 // npmNodeAt builds one npm dependency node installed at installDir. The site's
 // path is the whole point: a hoisted copy and a nested node_modules copy are
 // the same name at two paths under two different project roots.
-func npmNodeAt(t *testing.T, name, version, installDir string, declareRoot string) *model.DependencyNode {
+func npmNodeAt(t *testing.T, name, version, installDir string, declareRoot string) *sdkmodel.DependencyNode {
 	t.Helper()
 	purl := "pkg:npm/" + name + "@" + version
-	dep := testkit.MustDependencyCoords(t, model.Coordinates{
-		Name: name, Version: version, Ecosystem: model.EcosystemNPM, PURL: purl,
+	dep := testkit.MustDependencyCoords(t, sdkmodel.Coordinates{
+		Name: name, Version: version, Ecosystem: sdkmodel.EcosystemNPM, PURL: purl,
 	})
-	dep.Locations = []model.PackageLocation{{
+	dep.Locations = []sdkmodel.PackageLocation{{
 		RealPath:   filepath.Join(installDir, "package.json"),
 		ModuleRoot: declareRoot,
 	}}
@@ -26,21 +28,21 @@ func npmNodeAt(t *testing.T, name, version, installDir string, declareRoot strin
 	return dep
 }
 
-func npmGraph(t *testing.T, nodes []*model.DependencyNode, ids []string) (*model.Graph, *model.PackageRegistry) {
+func npmGraph(t *testing.T, nodes []*sdkmodel.DependencyNode, ids []string) (*sdkmodel.Graph, *sdkmodel.PackageRegistry) {
 	t.Helper()
-	g := model.New()
-	registry := model.NewPackageRegistry()
+	g := sdkmodel.New()
+	registry := sdkmodel.NewPackageRegistry()
 	for i, node := range nodes {
 		if err := g.AddNode(node); err != nil {
 			t.Fatalf("AddNode(%s): %v", node.NodeID(), err)
 		}
 		pkg := registry.Ensure(node.PackageRef)
-		pkg.Vulnerabilities = append(pkg.Vulnerabilities, model.Vulnerability{ID: ids[i], Source: "osv"})
+		pkg.Vulnerabilities = append(pkg.Vulnerabilities, sdkmodel.Vulnerability{ID: ids[i], Source: "osv"})
 	}
 	return g, registry
 }
 
-func npmReachability(t *testing.T, registry *model.PackageRegistry, purl string) *model.Reachability {
+func npmReachability(t *testing.T, registry *sdkmodel.PackageRegistry, purl string) *sdkmodel.Reachability {
 	t.Helper()
 	pkg, ok := registry.Get(purl)
 	if !ok || pkg == nil || len(pkg.Vulnerabilities) == 0 {
@@ -49,7 +51,7 @@ func npmReachability(t *testing.T, registry *model.PackageRegistry, purl string)
 	return pkg.Vulnerabilities[0].Reachability
 }
 
-func rootsOf(r *model.Reachability) []string {
+func rootsOf(r *sdkmodel.Reachability) []string {
 	if r == nil {
 		return nil
 	}
@@ -73,15 +75,15 @@ func TestEvidenceIsKeyedByTheProjectRootThatEstablishedIt(t *testing.T) {
 
 	apiDep := npmNodeAt(t, "lodash", "4.17.21", filepath.Join(apiRoot, "node_modules", "lodash"), "")
 	webDep := npmNodeAt(t, "express", "4.18.2", filepath.Join(webRoot, "node_modules", "express"), "")
-	g, registry := npmGraph(t, []*model.DependencyNode{apiDep, webDep}, []string{"GHSA-1", "GHSA-2"})
+	g, registry := npmGraph(t, []*sdkmodel.DependencyNode{apiDep, webDep}, []string{"GHSA-1", "GHSA-2"})
 
-	attributor := model.NewRootAttributor([]string{apiRoot, webRoot}, g)
+	attributor := sdkmodel.NewRootAttributor([]string{apiRoot, webRoot}, g)
 	for _, root := range []string{apiRoot, webRoot} {
-		applyImportedPackageSeeds(model.AnalyzeRequest{Graph: g, Registry: registry}, attributor, root, nil, false, time.Time{})
+		applyImportedPackageSeeds(sdkplugin.AnalyzeRequest{Graph: g, Registry: registry}, attributor, root, nil, false, time.Time{})
 	}
 
 	for _, tc := range []struct {
-		dep  *model.DependencyNode
+		dep  *sdkmodel.DependencyNode
 		want string
 	}{{apiDep, apiRoot}, {webDep, webRoot}} {
 		roots := rootsOf(npmReachability(t, registry, tc.dep.PackageRef))
@@ -112,18 +114,18 @@ func TestNestedCopyIsDecidedByPathNotNamedAsAnOccurrence(t *testing.T) {
 	// under a dependency of web.
 	hoisted := npmNodeAt(t, "lodash", "4.17.21", filepath.Join(apiRoot, "node_modules", "lodash"), "")
 	nested := npmNodeAt(t, "lodash", "3.10.1", filepath.Join(webRoot, "node_modules", "legacy", "node_modules", "lodash"), "")
-	g, registry := npmGraph(t, []*model.DependencyNode{hoisted, nested}, []string{"GHSA-1", "GHSA-1"})
+	g, registry := npmGraph(t, []*sdkmodel.DependencyNode{hoisted, nested}, []string{"GHSA-1", "GHSA-1"})
 
-	attributor := model.NewRootAttributor([]string{apiRoot, webRoot}, g)
+	attributor := sdkmodel.NewRootAttributor([]string{apiRoot, webRoot}, g)
 	// api imports lodash; web's build is not analyzed in this call.
-	applyImportedPackageSeeds(model.AnalyzeRequest{Graph: g, Registry: registry}, attributor, apiRoot,
+	applyImportedPackageSeeds(sdkplugin.AnalyzeRequest{Graph: g, Registry: registry}, attributor, apiRoot,
 		map[string]int{"lodash": 0}, false, time.Time{})
 
 	hoistedEvidence := npmReachability(t, registry, hoisted.PackageRef).Evidence
 	if len(hoistedEvidence) != 1 {
 		t.Fatalf("hoisted evidence = %d entries, want 1", len(hoistedEvidence))
 	}
-	if hoistedEvidence[0].Status != model.ReachabilityReachable {
+	if hoistedEvidence[0].Status != sdkmodel.ReachabilityReachable {
 		t.Errorf("hoisted status = %q, want reachable", hoistedEvidence[0].Status)
 	}
 	if got := hoistedEvidence[0].DependencyRefs; len(got) != 0 {
@@ -148,10 +150,10 @@ func TestUnattributedPackageKeepsTheRootFloorWithoutRefs(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "app")
 	dep := npmNodeAt(t, "lodash", "4.17.21", "", "")
 	dep.Locations = nil
-	g, registry := npmGraph(t, []*model.DependencyNode{dep}, []string{"GHSA-1"})
+	g, registry := npmGraph(t, []*sdkmodel.DependencyNode{dep}, []string{"GHSA-1"})
 
-	applyImportedPackageSeeds(model.AnalyzeRequest{Graph: g, Registry: registry},
-		model.NewRootAttributor([]string{root}, g), root, map[string]int{"lodash": 0}, false, time.Time{})
+	applyImportedPackageSeeds(sdkplugin.AnalyzeRequest{Graph: g, Registry: registry},
+		sdkmodel.NewRootAttributor([]string{root}, g), root, map[string]int{"lodash": 0}, false, time.Time{})
 
 	evidence := npmReachability(t, registry, dep.PackageRef).Evidence
 	if len(evidence) != 1 {
@@ -175,10 +177,10 @@ func TestSiteOutsideEveryAnalyzedRootIsNotAbsence(t *testing.T) {
 	store := filepath.Join(t.TempDir(), "pnpm-store")
 
 	dep := npmNodeAt(t, "lodash", "4.17.21", filepath.Join(store, "lodash@4.17.21"), "")
-	g, registry := npmGraph(t, []*model.DependencyNode{dep}, []string{"GHSA-1"})
+	g, registry := npmGraph(t, []*sdkmodel.DependencyNode{dep}, []string{"GHSA-1"})
 
-	applyImportedPackageSeeds(model.AnalyzeRequest{Graph: g, Registry: registry},
-		model.NewRootAttributor([]string{root}, g), root, map[string]int{"lodash": 0}, false, time.Time{})
+	applyImportedPackageSeeds(sdkplugin.AnalyzeRequest{Graph: g, Registry: registry},
+		sdkmodel.NewRootAttributor([]string{root}, g), root, map[string]int{"lodash": 0}, false, time.Time{})
 
 	r := npmReachability(t, registry, dep.PackageRef)
 	if r == nil || len(r.Evidence) != 1 {
@@ -202,13 +204,13 @@ func TestFailedProjectRootStillContributesUnknownEvidence(t *testing.T) {
 
 	// One package installed in both trees, so both passes are about it.
 	dep := npmNodeAt(t, "lodash", "4.17.21", filepath.Join(apiRoot, "node_modules", "lodash"), "")
-	dep.Locations = append(dep.Locations, model.PackageLocation{
+	dep.Locations = append(dep.Locations, sdkmodel.PackageLocation{
 		RealPath: filepath.Join(webRoot, "node_modules", "lodash", "package.json"),
 	})
-	g, registry := npmGraph(t, []*model.DependencyNode{dep}, []string{"GHSA-1"})
-	req := model.AnalyzeRequest{Graph: g, Registry: registry}
+	g, registry := npmGraph(t, []*sdkmodel.DependencyNode{dep}, []string{"GHSA-1"})
+	req := sdkplugin.AnalyzeRequest{Graph: g, Registry: registry}
 
-	attributor := model.NewRootAttributor([]string{apiRoot, webRoot}, g)
+	attributor := sdkmodel.NewRootAttributor([]string{apiRoot, webRoot}, g)
 	// api analyzed and found nothing; web's entry points could not be resolved.
 	applyImportedPackageSeeds(req, attributor, apiRoot, nil, false, time.Time{})
 	annotateProjectUnknown(req, attributor, webRoot, "no-entry-points", time.Time{})
@@ -217,7 +219,7 @@ func TestFailedProjectRootStillContributesUnknownEvidence(t *testing.T) {
 	if len(r.Evidence) != 2 {
 		t.Fatalf("evidence = %d entries (%v), want one per project root", len(r.Evidence), rootsOf(r))
 	}
-	if r.Status != model.ReachabilityUnknown {
+	if r.Status != sdkmodel.ReachabilityUnknown {
 		t.Errorf("summary = %q, want unknown: one root was never analyzed", r.Status)
 	}
 }
@@ -230,11 +232,11 @@ func TestFailedProjectRootStillContributesUnknownEvidence(t *testing.T) {
 func TestDeclaredRootsAreOnlyTrustedWhenTheyShareOurVocabulary(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "app")
 	dep := npmNodeAt(t, "lodash", "4.17.21", "", "apps/api")
-	dep.Locations = []model.PackageLocation{{ModuleRoot: "apps/api"}}
-	g, registry := npmGraph(t, []*model.DependencyNode{dep}, []string{"GHSA-1"})
+	dep.Locations = []sdkmodel.PackageLocation{{ModuleRoot: "apps/api"}}
+	g, registry := npmGraph(t, []*sdkmodel.DependencyNode{dep}, []string{"GHSA-1"})
 
-	applyImportedPackageSeeds(model.AnalyzeRequest{Graph: g, Registry: registry},
-		model.NewRootAttributor([]string{root}, g), root, nil, false, time.Time{})
+	applyImportedPackageSeeds(sdkplugin.AnalyzeRequest{Graph: g, Registry: registry},
+		sdkmodel.NewRootAttributor([]string{root}, g), root, nil, false, time.Time{})
 
 	r := npmReachability(t, registry, dep.PackageRef)
 	if r == nil || len(r.Evidence) == 0 {
@@ -249,22 +251,22 @@ func TestDeclaredRootsAreOnlyTrustedWhenTheyShareOurVocabulary(t *testing.T) {
 // halves of the rule hold independently of a full analysis pass.
 func TestAttributorCalibratesOnOverlap(t *testing.T) {
 	node := npmNodeAt(t, "lodash", "4.17.21", "", "/ws/api")
-	node.Locations = []model.PackageLocation{{ModuleRoot: "/ws/api"}}
-	g := model.New()
+	node.Locations = []sdkmodel.PackageLocation{{ModuleRoot: "/ws/api"}}
+	g := sdkmodel.New()
 	if err := g.AddNode(node); err != nil {
 		t.Fatal(err)
 	}
 
-	shared := model.NewRootAttributor([]string{"/ws/api", "/ws/web"}, g)
-	if got := shared.Attribute(node, "/ws/api"); got != model.AttributedToSite {
+	shared := sdkmodel.NewRootAttributor([]string{"/ws/api", "/ws/web"}, g)
+	if got := shared.Attribute(node, "/ws/api"); got != sdkmodel.AttributedToSite {
 		t.Errorf("attribute(own root) = %v, want attributed-to-site", got)
 	}
-	if got := shared.Attribute(node, "/ws/web"); got != model.AttributedElsewhere {
+	if got := shared.Attribute(node, "/ws/web"); got != sdkmodel.AttributedElsewhere {
 		t.Errorf("attribute(other root) = %v, want attributed-elsewhere", got)
 	}
 
-	foreign := model.NewRootAttributor([]string{"/other/one"}, g)
-	if got := foreign.Attribute(node, "/other/one"); got != model.AttributedToRootOnly {
+	foreign := sdkmodel.NewRootAttributor([]string{"/other/one"}, g)
+	if got := foreign.Attribute(node, "/other/one"); got != sdkmodel.AttributedToRootOnly {
 		t.Errorf("attribute under a foreign vocabulary = %v, want attributed-to-root-only", got)
 	}
 }

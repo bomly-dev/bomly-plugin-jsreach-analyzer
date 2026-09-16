@@ -9,9 +9,11 @@ import (
 	"testing"
 	"time"
 
-	model "github.com/bomly-dev/bomly-sdk"
 	"github.com/bomly-dev/bomly-sdk/testkit"
 	"github.com/evanw/esbuild/pkg/api"
+
+	sdkmodel "github.com/bomly-dev/bomly-sdk/model"
+	sdkplugin "github.com/bomly-dev/bomly-sdk/plugin"
 )
 
 func jsProjectFixture(name string) string {
@@ -89,8 +91,8 @@ func TestJSDynamicImportDetectionFromTestdata(t *testing.T) {
 
 func TestJSDescriptorAndRunnerResult(t *testing.T) {
 	a := Analyzer{}
-	if err := a.Ready(context.Background(), model.AnalyzeRequest{}); err != nil || a.Descriptor().Name != Name {
-		t.Fatalf("descriptor = %+v ready_err=%v", a.Descriptor(), a.Ready(context.Background(), model.AnalyzeRequest{}))
+	if err := a.Ready(context.Background(), sdkplugin.AnalyzeRequest{}); err != nil || a.Descriptor().Name != Name {
+		t.Fatalf("descriptor = %+v ready_err=%v", a.Descriptor(), a.Ready(context.Background(), sdkplugin.AnalyzeRequest{}))
 	}
 	if !(RunnerResult{EntryPoints: []string{"index.js"}}).hasResult() || (RunnerResult{}).hasResult() {
 		t.Fatal("runner result actionability mismatch")
@@ -99,21 +101,21 @@ func TestJSDescriptorAndRunnerResult(t *testing.T) {
 
 func TestJSStandaloneApplyRunnerResult(t *testing.T) {
 	const purl = "pkg:npm/lodash"
-	g := model.New()
-	pkg := testkit.MustDependencyCoords(t, model.Coordinates{Name: "lodash", Ecosystem: model.EcosystemNPM, PURL: purl})
+	g := sdkmodel.New()
+	pkg := testkit.MustDependencyCoords(t, sdkmodel.Coordinates{Name: "lodash", Ecosystem: sdkmodel.EcosystemNPM, PURL: purl})
 	if err := g.AddNode(pkg); err != nil {
 		t.Fatal(err)
 	}
-	reg := model.NewPackageRegistry()
-	reg.Ensure(purl).Vulnerabilities = []model.Vulnerability{{ID: "GHSA-1"}}
-	req := model.AnalyzeRequest{Graph: g, Registry: reg}
+	reg := sdkmodel.NewPackageRegistry()
+	reg.Ensure(purl).Vulnerabilities = []sdkmodel.Vulnerability{{ID: "GHSA-1"}}
+	req := sdkplugin.AnalyzeRequest{Graph: g, Registry: reg}
 	root := jsProjectFixture("entrypoints")
-	got := applyRunnerResult(req, model.NewRootAttributor([]string{root}, g), root, RunnerResult{
+	got := applyRunnerResult(req, sdkmodel.NewRootAttributor([]string{root}, g), root, RunnerResult{
 		ImportedPackages: map[string]struct{}{"lodash": {}},
 		EntryPoints:      []string{"index.js"},
 	}, time.Time{})
 	vulns := reg.Ensure(purl).Vulnerabilities
-	if got.reachable != 1 || vulns[0].Reachability == nil || vulns[0].Reachability.Status != model.ReachabilityReachable {
+	if got.reachable != 1 || vulns[0].Reachability == nil || vulns[0].Reachability.Status != sdkmodel.ReachabilityReachable {
 		t.Fatalf("outcome = %+v reachability=%+v", got, vulns[0].Reachability)
 	}
 }

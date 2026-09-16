@@ -7,8 +7,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	model "github.com/bomly-dev/bomly-sdk"
 	"github.com/bomly-dev/bomly-sdk/testkit"
+
+	sdkmodel "github.com/bomly-dev/bomly-sdk/model"
+	sdkplugin "github.com/bomly-dev/bomly-sdk/plugin"
 )
 
 type workspaceFakeRunner struct {
@@ -58,7 +60,7 @@ func TestDiscoverWorkspaceHierarchiesSupportsManifestForms(t *testing.T) {
 			for path, body := range tc.extra {
 				writeJSFixture(t, root, path, body)
 			}
-			hierarchies := discoverWorkspaceHierarchies(model.AnalyzeRequest{ProjectPath: filepath.Join(root, "packages", "app")})
+			hierarchies := discoverWorkspaceHierarchies(sdkplugin.AnalyzeRequest{ProjectPath: filepath.Join(root, "packages", "app")})
 			if len(hierarchies) != 1 || hierarchies[0].Root != root {
 				t.Fatalf("hierarchies = %+v, want root %s", hierarchies, root)
 			}
@@ -82,7 +84,7 @@ func TestDiscoverWorkspaceHierarchiesRecursesNestedDeclarations(t *testing.T) {
 	writeJSFixture(t, root, "package.json", `{"name":"root","workspaces":["packages/*"]}`)
 	writeJSFixture(t, root, "packages/nested/package.json", `{"name":"nested","workspaces":["children/*"]}`)
 	writeJSFixture(t, root, "packages/nested/children/app/package.json", `{"name":"app"}`)
-	hierarchies := discoverWorkspaceHierarchies(model.AnalyzeRequest{ProjectPath: root})
+	hierarchies := discoverWorkspaceHierarchies(sdkplugin.AnalyzeRequest{ProjectPath: root})
 	if len(hierarchies) != 1 {
 		t.Fatalf("hierarchies = %+v", hierarchies)
 	}
@@ -106,14 +108,14 @@ func TestAnalyzerTraversesConsumedWorkspaceMembers(t *testing.T) {
 	writeJSFixture(t, root, "packages/unused/package.json", `{"name":"@company/unused","main":"index.js"}`)
 	writeJSFixture(t, root, "packages/unused/index.js", "")
 
-	g := model.New()
-	reg := model.NewPackageRegistry()
+	g := sdkmodel.New()
+	reg := sdkmodel.NewPackageRegistry()
 	lodashPURL := "pkg:npm/lodash@1"
 	leftPadPURL := "pkg:npm/left-pad@1"
-	lodash := testkit.MustDependencyCoords(t, model.Coordinates{Name: "lodash", Version: "1", Ecosystem: model.EcosystemNPM, PURL: lodashPURL})
-	leftPad := testkit.MustDependencyCoords(t, model.Coordinates{Name: "left-pad", Version: "1", Ecosystem: model.EcosystemNPM, PURL: leftPadPURL})
-	reg.Ensure(lodashPURL).Vulnerabilities = []model.Vulnerability{{ID: "lodash"}}
-	reg.Ensure(leftPadPURL).Vulnerabilities = []model.Vulnerability{{ID: "left-pad"}}
+	lodash := testkit.MustDependencyCoords(t, sdkmodel.Coordinates{Name: "lodash", Version: "1", Ecosystem: sdkmodel.EcosystemNPM, PURL: lodashPURL})
+	leftPad := testkit.MustDependencyCoords(t, sdkmodel.Coordinates{Name: "left-pad", Version: "1", Ecosystem: sdkmodel.EcosystemNPM, PURL: leftPadPURL})
+	reg.Ensure(lodashPURL).Vulnerabilities = []sdkmodel.Vulnerability{{ID: "lodash"}}
+	reg.Ensure(leftPadPURL).Vulnerabilities = []sdkmodel.Vulnerability{{ID: "left-pad"}}
 	_ = g.AddNode(lodash)
 	_ = g.AddNode(leftPad)
 	a := Analyzer{DisableCache: true, Runner: workspaceFakeRunner{results: map[string]RunnerResult{
@@ -121,13 +123,13 @@ func TestAnalyzerTraversesConsumedWorkspaceMembers(t *testing.T) {
 		shared: {EntryPoints: []string{filepath.Join(shared, "index.js")}, ImportedPackages: map[string]struct{}{"lodash": {}}},
 		unused: {EntryPoints: []string{filepath.Join(unused, "index.js")}, ImportedPackages: map[string]struct{}{"left-pad": {}}},
 	}}}
-	if _, err := a.Analyze(context.Background(), model.AnalyzeRequest{Graph: g, Registry: reg, ProjectPath: root}); err != nil {
+	if _, err := a.Analyze(context.Background(), sdkplugin.AnalyzeRequest{Graph: g, Registry: reg, ProjectPath: root}); err != nil {
 		t.Fatal(err)
 	}
-	if got := reg.Ensure(lodashPURL).Vulnerabilities[0].Reachability; got == nil || got.Status != model.ReachabilityReachable || got.Hops == nil || *got.Hops != 1 {
+	if got := reg.Ensure(lodashPURL).Vulnerabilities[0].Reachability; got == nil || got.Status != sdkmodel.ReachabilityReachable || got.Hops == nil || *got.Hops != 1 {
 		t.Fatalf("lodash reachability = %+v, want reachable at hop 1", got)
 	}
-	if got := reg.Ensure(leftPadPURL).Vulnerabilities[0].Reachability; got == nil || got.Status != model.ReachabilityUnreachable {
+	if got := reg.Ensure(leftPadPURL).Vulnerabilities[0].Reachability; got == nil || got.Status != sdkmodel.ReachabilityUnreachable {
 		t.Fatalf("left-pad reachability = %+v, want unreachable", got)
 	}
 }
@@ -139,30 +141,30 @@ func TestAnalyzerMarksWorkspaceClosureIncomplete(t *testing.T) {
 	shared := filepath.Join(root, "packages", "shared")
 	writeJSFixture(t, root, "packages/shared/package.json", `{"name":"@company/shared","main":"index.js"}`)
 	writeJSFixture(t, root, "packages/shared/index.js", "")
-	g, reg, lodashPURL := newNPMGraph(t, "lodash", "1", model.Vulnerability{ID: "lodash"})
+	g, reg, lodashPURL := newNPMGraph(t, "lodash", "1", sdkmodel.Vulnerability{ID: "lodash"})
 	a := Analyzer{DisableCache: true, Runner: workspaceFakeRunner{
 		results: map[string]RunnerResult{root: {EntryPoints: []string{filepath.Join(root, "index.js")}, ImportedPackages: map[string]struct{}{"@company/shared": {}}}},
 		errors:  map[string]error{shared: errors.New("parse failed")},
 	}}
-	if _, err := a.Analyze(context.Background(), model.AnalyzeRequest{Graph: g, Registry: reg, ProjectPath: root}); err != nil {
+	if _, err := a.Analyze(context.Background(), sdkplugin.AnalyzeRequest{Graph: g, Registry: reg, ProjectPath: root}); err != nil {
 		t.Fatal(err)
 	}
-	if got := reg.Ensure(lodashPURL).Vulnerabilities[0].Reachability; got == nil || got.Status != model.ReachabilityUnknown || got.Reason != "workspace-closure-incomplete" {
+	if got := reg.Ensure(lodashPURL).Vulnerabilities[0].Reachability; got == nil || got.Status != sdkmodel.ReachabilityUnknown || got.Reason != "workspace-closure-incomplete" {
 		t.Fatalf("reachability = %+v, want workspace closure unknown", got)
 	}
 }
 
 // newNPMGraph builds a single-node npm graph and an accompanying
 // PURL-keyed registry that carries vulns. Returns (graph, registry, purl).
-func newNPMGraph(t *testing.T, name, version string, vulns ...model.Vulnerability) (*model.Graph, *model.PackageRegistry, string) {
+func newNPMGraph(t *testing.T, name, version string, vulns ...sdkmodel.Vulnerability) (*sdkmodel.Graph, *sdkmodel.PackageRegistry, string) {
 	t.Helper()
 	purl := "pkg:npm/" + name + "@" + version
-	g := model.New()
-	dep := testkit.MustDependencyCoords(t, model.Coordinates{Name: name, Version: version, Ecosystem: model.EcosystemNPM, PURL: purl})
+	g := sdkmodel.New()
+	dep := testkit.MustDependencyCoords(t, sdkmodel.Coordinates{Name: name, Version: version, Ecosystem: sdkmodel.EcosystemNPM, PURL: purl})
 	if err := g.AddNode(dep); err != nil {
 		t.Fatalf("add node: %v", err)
 	}
-	reg := model.NewPackageRegistry()
+	reg := sdkmodel.NewPackageRegistry()
 	reg.Ensure(purl).Vulnerabilities = vulns
 	return g, reg, purl
 }
