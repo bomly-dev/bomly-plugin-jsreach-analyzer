@@ -15,5 +15,21 @@
   },
   "description": "JavaScript/TypeScript reachability analyzer for Bomly: builds an esbuild-based import graph from your package entry points to mark which vulnerable npm packages are actually imported (package tier).",
   "homepage": "https://github.com/bomly-dev/bomly-plugin-jsreach-analyzer",
-  "license": "Apache-2.0"
+  "license": "Apache-2.0",
+  "access": {
+    "filesystemRead": [
+      "any",
+      "cache",
+      "project"
+    ],
+    "filesystemWrite": [
+      "cache"
+    ],
+    "environment": [
+      "HOME",
+      "LocalAppData",
+      "NO_COLOR",
+      "XDG_CACHE_HOME"
+    ]
+  }
 }

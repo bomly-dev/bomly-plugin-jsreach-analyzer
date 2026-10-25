@@ -51,6 +51,14 @@ func (a Analyzer) Descriptor() sdkplugin.AnalyzerDescriptor {
 		SupportedLanguages:  []sdkmodel.Language{sdkmodel.LanguageJavaScript, sdkmodel.LanguageTypeScript},
 		SupportedTiers:      []sdkmodel.ReachabilityTier{sdkmodel.TierPackage},
 		Capabilities:        []string{sdkplugin.CapabilityPackageUpdates},
+		// jsreach reads JavaScript/TypeScript source, and only annotates
+		// advisories a matcher already put in the registry for npm packages
+		// in the graph.
+		Requires: sdkplugin.Requirements{
+			sdkplugin.RequirementSourceTree,
+			sdkplugin.RequirementDependencyGraph,
+			sdkplugin.RequirementVulnerabilityRecords,
+		},
 	}
 }
 
