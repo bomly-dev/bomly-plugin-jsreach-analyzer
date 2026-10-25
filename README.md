@@ -18,7 +18,7 @@ disk under `<user cache dir>/bomly/analyzers/jsreach/` (24h TTL).
 - **Ecosystem:** npm (npm, pnpm, Yarn workspaces)
 - **Languages:** JavaScript, TypeScript
 - **Tiers:** package
-- **Requires:** nothing besides the sources — esbuild is embedded. The analyzer declares the pipeline data it needs -- a source tree, a dependency graph, and vulnerability records from a matcher -- so Bomly skips it, with a warning, when a scan cannot supply them.
+- **Requires:** a source tree, a dependency graph, and vulnerability records from a matcher; Bomly skips the analyzer, with a warning, when a scan cannot supply them. No Node.js or other toolchain is needed: esbuild is embedded.
 
 ## Access
 
@@ -26,7 +26,8 @@ disk under `<user cache dir>/bomly/analyzers/jsreach/` (24h TTL).
 
 | Access | Why |
 | --- | --- |
-| Reads `project` | `package.json`, lockfiles, workspace manifests and the sources esbuild walks from your entry points. Like Node and TypeScript, esbuild also consults `package.json` and `tsconfig.json` in the project's parent directories |
+| Reads `project` | `package.json`, lockfiles, workspace manifests and the sources esbuild walks from your entry points |
+| Reads `any` | Like Node and TypeScript, esbuild also consults `package.json` and `tsconfig.json` in the directories above the project, up to the filesystem root |
 | Reads and writes `cache` | The result cache under `<user cache dir>/bomly/analyzers/jsreach/` |
 | Environment `HOME`, `XDG_CACHE_HOME`, `LocalAppData` | Locating the user cache directory (`os.UserCacheDir`: `XDG_CACHE_HOME` or `HOME` on Linux, `HOME` on macOS, `LocalAppData` on Windows) |
 | Environment `NO_COLOR` | esbuild's logger checks it when deciding whether to colour terminal output; its log level is silent, so nothing is printed |

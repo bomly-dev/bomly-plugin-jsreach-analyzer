@@ -18,6 +18,7 @@
   "license": "Apache-2.0",
   "access": {
     "filesystemRead": [
+      "any",
       "cache",
       "project"
     ],
